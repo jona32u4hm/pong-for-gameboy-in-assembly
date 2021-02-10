@@ -1,0 +1,878 @@
+include "gbhw.inc"
+
+;-------------- INTERRUPT VECTORS ------------------------
+; specific memory addresses are called when a hardware interrupt triggers
+
+; Vertical-blank triggers each time the screen finishes drawing. Video-RAM
+; (VRAM) is only available during VBLANK. So this is when updating OAM /
+; sprites is executed.
+SECTION "Vblank", ROM0[$0040]
+	reti
+
+SECTION "LCDC", ROM0[$0048]
+	reti
+
+SECTION "Timer", ROM0[$0050]
+	reti
+
+SECTION "Serial", ROM0[$0058]
+	reti
+
+SECTION "Joypad", ROM0[$0060]
+	reti
+;----------- END INTERRUPT VECTORS -------------------
+
+SECTION "ROM_entry_point", ROM0[$0100]	; ROM is given control from boot here
+	nop
+	jp	code_begins
+
+;------------- BEGIN ROM HEADER ----------------
+; The gameboy reads this info (before handing control over to ROM)
+SECTION "rom header", ROM0[$0104]
+	NINTENDO_LOGO
+DB "pongJHM    32U4"
+DB $00;dmg
+DB $30,$38
+DB $00
+DB $00
+DB $00
+DB $00
+DB $01
+DB $33
+DB $00
+DB $63
+DB $BD,$F7
+
+code_begins:
+ld [$CFF0],a
+	di	; disable interrupts
+	ld	SP, $FFFF	; set stack to top of HRAM
+
+ld	a, IEF_VBLANK	; --
+	ld	[rIE], a	; Set only Vblank interrupt flag
+	ei			; enable interrupts. Only vblank will trigger
+
+	ld	a, [rLCDC]	; fetch LCD Config. (Each bit is a flag)
+	or	LCDCF_OBJON	; enable sprites through "OBJects ON" flag
+	or	LCDCF_OBJ8	; enable 8bit wide sprites (vs. 16-bit wide)
+	ld	[rLCDC], a	; save LCD Config. Sprites are now visible. 
+
+    ld a, %11100100
+	ld [rBGP], a
+	ld a, %11100100
+	ld [rOBP0], a
+	ld a, %00011011
+	ld [rOBP1], a
+ld bc,_RAM
+.forloopa;this loop sets the part of ram used by dma to $00
+ld a, $00
+ld [bc],a
+inc bc
+ld a,c
+cp 160
+jp nz, .forloopa
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;load tiles;;;;;;;;;;;;;;;;;;
+call	lcd_Stop ;turn off lcd
+	ld	hl, tiles	; load tiles 2 vram
+	ld	de, _VRAM	
+	ld	bc, tilesend - tiles
+	call	mem_Copy
+ld	a, [rLCDC]
+	or	LCDCF_ON
+	ld	[rLCDC], a	; turn LCD back on
+
+.tennisstart
+;set objs
+ld a,8
+ld [$C001],a
+ld a,56
+ld [$C000],a
+ld a,41
+ld [$C002],a
+ld a,8
+ld [$C005],a
+ld a,64
+ld [$C004],a
+ld a,42
+ld [$C006],a
+ld a,8
+ld [$C009],a
+ld a,72
+ld [$C008],a
+ld a,42
+ld [$C00A],a
+ld a,8
+ld [$C00D],a
+ld a,80
+ld [$C00C],a
+ld a,43
+ld [$C00E],a
+ld a,160
+ld [$C011],a
+ld a,56
+ld [$C010],a
+ld a,41
+ld [$C012],a
+ld a,160
+ld [$C015],a
+ld a,64
+ld [$C014],a
+ld a,42
+ld [$C016],a
+ld a,160
+ld [$C019],a
+ld a,72
+ld [$C018],a
+ld a,42
+ld [$C01A],a
+ld a,160
+ld [$C01D],a
+ld a,80
+ld [$C01C],a
+ld a,43
+ld [$C01E],a
+ld a,84
+ld [$C021],a
+ld a,88
+ld [$C020],a
+ld a,40
+ld [$C022],a
+
+ld	hl, tennis ;load vram map 4 title
+	ld	de, _SCRN0
+	ld	bc, 20    
+call settiles 
+ld a,$00
+ld [$C200],a;c200 is var for ballxdirection
+ld [$C201],a;c201 is var for ballydirection
+ld a,2
+ld [$C202],a
+.tennisloop;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+halt
+	ld	hl, $C000	; load sprite data to oam
+	ld	de, $FE00	
+	ld	bc, 96
+	call	mem_Copy
+halt
+	ld	hl, $C060	; (yes i know im not using dma)
+	ld	de, $FE60	
+	ld	bc, 96
+	call	mem_Copy
+LD A,[$C021]
+scf
+ccf
+add 248
+jp c,.tp2noscore
+ld hl,_SCRN0+19
+call add12score
+ld a,84
+ld [$C021],a
+ld a,88
+ld [$C020],a
+halt
+halt
+halt
+halt
+halt
+halt
+halt
+nop
+.tp2noscore
+LD A,[$C021]
+scf
+ccf
+add 88
+jp nc,.tp1noscore
+ld hl,_SCRN0+3
+call add12score
+ld a,84
+ld [$C021],a
+ld a,88
+ld [$C020],a
+halt
+halt
+halt
+halt
+halt
+halt
+halt
+nop
+.tp1noscore
+LD A,[$C020]
+scf
+ccf
+add 232
+jp c,.tnobouncey1
+ld a,$00
+ld [$C201],a
+.tnobouncey1
+
+LD A,[$C020]
+scf
+ccf
+add 104
+jp nc,.tnobouncey2
+ld a,$0A
+ld [$C201],a
+.tnobouncey2
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+LD A,[$C021]
+add a,240
+jp c,.tnobouncex1
+LD A,[$C000]
+ld b,a
+ld a,$FF
+sub b
+ld b,a
+LD A,[$C020]
+push af
+add b
+jp nc,.tnobouncexx1
+ld a,b
+sub 32
+pop bc
+add b
+jp c,.tnobouncex1
+ld a,$00
+ld [$C200],a
+.tnobouncex1
+
+LD A,[$C021]
+add a,$67
+jp nc,.tnobouncex2
+LD A,[$C010]
+ld b,a
+ld a,$FF
+sub b
+ld b,a
+LD A,[$C020]
+push af
+add b
+jp nc,.tnobouncexx2
+ld a,b
+sub 32
+pop bc
+add b
+jp c,.tnobouncex2
+ld a,$0A
+ld [$C200],a
+
+.tnobouncex2
+
+ld a,[$C202]
+ld d,a
+
+ld a,[$C200]
+cp a,00
+jp nz,.txxx
+LD A,[$C021]
+add d
+LD [$C021],a
+jp .txxxx
+.txxx
+LD A,[$C021]
+sub d
+LD [$C021],a
+.txxxx
+ld a,[$C201]
+cp a,00
+jp nz,.txxxxx
+LD A,[$C020]
+add d
+LD [$C020],a
+jp .txxxxxx
+.txxxxx
+LD A,[$C020]
+sub d
+LD [$C020],a
+.txxxxxx
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+call jpad_GetKeys
+and PADF_START
+jp z,.tnosloop
+halt
+halt
+halt
+nop
+call	lcd_Stop ;turn off lcd
+.tsloop
+call jpad_GetKeys
+and PADF_START
+jp z,.tsloop
+ld	a, [rLCDC]
+	or	LCDCF_ON
+	ld	[rLCDC], a	; turn LCD back on
+.tnosloop
+
+call jpad_GetKeys
+push af
+ld a,[$C000]
+ADD 231
+jp nc,.tnoupp1
+pop af
+push af
+and PADF_UP
+jp z,.tnoupp1
+ld a,[$C000]
+sub 2
+ld [$C000],a
+add 8
+ld [$C004],a
+add 8
+ld [$C008],a
+add 8
+ld [$C00C],a
+.tnoupp1
+
+
+ld a,[$C000]
+ADD 128
+jp c,.tnodownp1
+pop af
+push af
+and PADF_DOWN
+jp z,.tnodownp1
+ld a,[$C000]
+add 2
+ld [$C000],a
+add 8
+ld [$C004],a
+add 8
+ld [$C008],a
+add 8
+ld [$C00C],a
+.tnodownp1
+
+
+ld a,[$C010]
+ADD 231
+jp nc,.tnoupp2
+pop af
+push af
+and PADF_A
+jp z,.tnoupp2
+ld a,[$C010]
+sub 2
+ld [$C010],a
+add 8
+ld [$C014],a
+add 8
+ld [$C018],a
+add 8
+ld [$C01C],a
+.tnoupp2
+
+
+ld a,[$C010]
+ADD 128
+jp c,.tnodownp2
+pop af
+push af
+and PADF_B
+jp z,.tnodownp2
+ld a,[$C010]
+add 2
+ld [$C010],a
+add 8
+ld [$C014],a
+add 8
+ld [$C018],a
+add 8
+ld [$C01C],a
+.tnodownp2
+pop af
+and PADF_SELECT
+jp z,.tennisloop
+ld a,[$C202]
+cp 4
+jp z,.tresetspeed
+inc a
+ld [$C202],a
+halt
+halt
+halt
+halt
+halt
+halt
+halt
+halt
+halt
+nop
+jp .tennisloop
+
+.tresetspeed
+ld a,2
+ld [$C202],a
+halt
+halt
+halt
+halt
+halt
+halt
+halt
+halt
+halt
+nop
+jp .tennisloop; end of main loop
+
+.tnobouncexx1
+pop af
+jp .tnobouncex1
+
+.tnobouncexx2
+pop af
+jp .tnobouncex2
+
+
+
+
+
+add12score:: ;this adds 1 to the current score using the tiles in vram as 
+;the variables containing the score
+ld a,[hl]
+cp 13
+jr z,.skipa12s1
+inc a
+ld [hl],a
+jp .skipa12s2
+.skipa12s1
+ld a,4
+ld [hl],a
+dec hl
+
+ld a,[hl]
+cp 13
+jr z,.skipa12s3
+inc a
+ld [hl],a
+jp .skipa12s2
+.skipa12s3
+ld a,4
+ld [hl],a
+dec hl
+
+ld a,[hl]
+cp 13
+jr z,.skipa12s4
+inc a
+ld [hl],a
+jp .skipa12s2
+.skipa12s4
+ld a,4
+ld [hl],a
+dec hl
+
+ld a,[hl]
+cp 13
+jr z,.skipa12s2
+inc a
+ld [hl],a
+jr .skipa12s2
+
+.skipa12s2
+ret
+
+
+jpad_GetKeys
+; Uses AF, B
+; get currently pressed keys. Register A will hold keys in the following
+; order: MSB --> LSB (Most Significant Bit --> Least Significant Bit)
+; Down, Up, Left, Right, Start, Select, B, A
+; This works by writing
+
+	; get action buttons: A, B, Start / Select
+	ld	a, JOYPAD_BUTTONS; choose bit that'll give us action button info
+	ld	[rJOYPAD], a; write to joypad, telling it we'd like button info
+	ld	a, [rJOYPAD]; gameboy will write (back in address) joypad info
+	ld	a, [rJOYPAD]
+	cpl		; take compliment
+	and	$0f	; look at first 4 bits only  (lower nibble)
+	swap	a	; place lower nibble into upper nibble
+	ld	b, a	; store keys in b
+	; get directional keys
+	ld	a, JOYPAD_ARROWS
+	ld	[rJOYPAD], a ; write to joypad, selecting direction keys
+	ld	a, [rJOYPAD]
+	ld	a, [rJOYPAD]
+	ld	a, [rJOYPAD]	; delay to reliablly read keys
+	ld	a, [rJOYPAD]	; since we've just swapped from reading
+	ld	a, [rJOYPAD]	; buttons to arrow keys
+	ld	a, [rJOYPAD]
+	cpl			; take compliment
+	and	$0f		; keep lower nibble
+	or	b		; combine action & direction keys (result in a)
+	ld	b, a
+
+	ld	a, JOYPAD_BUTTONS | JOYPAD_ARROWS
+	ld	[rJOYPAD], a		; reset joypad
+
+	ld	a, b	; register A holds result. Each bit represents a key
+	ret
+lcd_Stop:
+	ld	a, [rLCDC]	; LCD-Config
+	and	LCDCF_ON	; compare config to lcd-on flag
+	ret	z		; return if LCD is already off
+.wait4vblank
+	ldh	a, [rLY]   ; ldh is a faster version of ld if in [$FFxx] range
+	cp	145  ; are we at line 145 yet?  (finished drawing screen then)
+	jr	nz, .wait4vblank
+.stopLCD
+	ld	a, [rLCDC]
+	xor	LCDCF_ON	; XOR lcd-on bit with lcd control bits. (toggles LCD off)
+	ld	[rLCDC], a	; `a` holds result of XOR operation
+	ret
+settiles:
+ld a,0
+.nl
+	push af  
+	ld bc,20                     
+	call	mem_CopyVRAM
+	push hl
+	ld hl,12
+	add hl,de
+	ld d,h
+	ld e,l
+	pop hl
+	pop af
+	inc a
+	cp 18
+	jp nz,.nl
+ret
+mem_Copy::
+	inc	b
+	inc	c
+	jr	.skip
+.loop	ld	a,[hl+]
+	ld	[de],a
+	inc	de
+.skip	dec	c
+	jr	nz,.loop
+	dec	b
+	jr	nz,.loop
+	ret
+mem_CopyVRAM::
+
+	inc	b
+	inc	c
+	jr	.skip
+.loop   di
+        ldh     a,[rSTAT]       ; <---+
+        and     STATF_BUSY      ;     |
+        jr      nz,@-4          ; ----+
+        ld      a,[hl+]
+	ld	[de],a
+        ei
+	inc	de
+.skip	dec	c
+	jr	nz,.loop
+	dec	b
+	jr	nz,.loop
+
+	ret
+
+
+
+
+
+
+;most of this tiles werent used because they were meant for other games
+
+tiles::
+DB $00,$00,$00,$00,$00,$00,$00,$00
+DB $00,$00,$00,$00,$00,$00,$00,$00
+DB $FF,$00,$FF,$00,$FF,$00,$FF,$00
+DB $FF,$00,$FF,$00,$FF,$00,$FF,$00
+DB $00,$FF,$00,$FF,$00,$FF,$00,$FF
+DB $00,$FF,$00,$FF,$00,$FF,$00,$FF
+DB $FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF
+DB $FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF
+DB $00,$00,$3C,$3C,$46,$46,$4A,$4A
+DB $52,$52,$62,$62,$3C,$3C,$00,$00
+DB $00,$00,$08,$08,$18,$18,$08,$08
+DB $08,$08,$08,$08,$1C,$1C,$00,$00
+DB $00,$00,$18,$18,$24,$24,$04,$04
+DB $08,$08,$10,$10,$3C,$3C,$00,$00
+DB $00,$00,$18,$18,$04,$04,$18,$18
+DB $04,$04,$24,$24,$18,$18,$00,$00
+DB $00,$00,$24,$24,$24,$24,$3C,$3C
+DB $04,$04,$04,$04,$04,$04,$00,$00
+DB $00,$00,$3C,$3C,$20,$20,$38,$38
+DB $04,$04,$24,$24,$18,$18,$00,$00
+DB $00,$00,$18,$18,$20,$20,$38,$38
+DB $24,$24,$24,$24,$18,$18,$00,$00
+DB $00,$00,$7E,$7E,$02,$02,$04,$04
+DB $08,$08,$10,$10,$10,$10,$00,$00
+DB $00,$00,$18,$18,$24,$24,$18,$18
+DB $24,$24,$24,$24,$18,$18,$00,$00
+DB $00,$00,$18,$18,$24,$24,$24,$24
+DB $1C,$1C,$04,$04,$18,$18,$00,$00
+DB $00,$00,$18,$18,$24,$24,$24,$24
+DB $3C,$3C,$24,$24,$24,$24,$00,$00
+DB $00,$00,$30,$30,$28,$28,$38,$38
+DB $24,$24,$24,$24,$38,$38,$00,$00
+DB $00,$00,$18,$18,$24,$24,$20,$20
+DB $20,$20,$24,$24,$18,$18,$00,$00
+DB $00,$00,$38,$38,$24,$24,$24,$24
+DB $24,$24,$24,$24,$38,$38,$00,$00
+DB $00,$00,$3C,$3C,$20,$20,$38,$38
+DB $20,$20,$20,$20,$3C,$3C,$00,$00
+DB $00,$00,$3C,$3C,$20,$20,$38,$38
+DB $20,$20,$20,$20,$20,$20,$00,$00
+DB $00,$00,$18,$18,$24,$24,$20,$20
+DB $2C,$2C,$24,$24,$18,$18,$00,$00
+DB $00,$00,$24,$24,$24,$24,$3C,$3C
+DB $24,$24,$24,$24,$24,$24,$00,$00
+DB $00,$00,$38,$38,$10,$10,$10,$10
+DB $10,$10,$10,$10,$38,$38,$00,$00
+DB $00,$00,$3E,$3E,$08,$08,$08,$08
+DB $08,$08,$28,$28,$10,$10,$00,$00
+DB $00,$00,$24,$24,$28,$28,$30,$30
+DB $28,$28,$24,$24,$24,$24,$00,$00
+DB $00,$00,$20,$20,$20,$20,$20,$20
+DB $20,$20,$20,$20,$3C,$3C,$00,$00
+DB $00,$00,$46,$46,$6A,$6A,$52,$52
+DB $42,$42,$42,$42,$42,$42,$00,$00
+DB $00,$00,$42,$42,$62,$62,$52,$52
+DB $4A,$4A,$46,$46,$42,$42,$00,$00
+DB $00,$00,$3C,$3C,$42,$42,$42,$42
+DB $42,$42,$42,$42,$3C,$3C,$00,$00
+DB $00,$00,$38,$38,$24,$24,$24,$24
+DB $38,$38,$20,$20,$20,$20,$00,$00
+DB $00,$00,$38,$38,$44,$44,$44,$44
+DB $54,$54,$4C,$4C,$3E,$3E,$00,$00
+DB $00,$00,$38,$38,$24,$24,$38,$38
+DB $24,$24,$24,$24,$24,$24,$00,$00
+DB $00,$00,$18,$18,$20,$20,$18,$18
+DB $04,$04,$24,$24,$18,$18,$00,$00
+DB $00,$00,$3E,$3E,$08,$08,$08,$08
+DB $08,$08,$08,$08,$08,$08,$00,$00
+DB $00,$00,$22,$22,$22,$22,$22,$22
+DB $22,$22,$22,$22,$1C,$1C,$00,$00
+DB $00,$00,$22,$22,$22,$22,$22,$22
+DB $14,$14,$14,$14,$08,$08,$00,$00
+DB $00,$00,$42,$42,$42,$42,$42,$42
+DB $4A,$4A,$56,$56,$62,$62,$00,$00
+DB $00,$00,$44,$44,$28,$28,$10,$10
+DB $28,$28,$44,$44,$44,$44,$00,$00
+DB $00,$00,$44,$44,$24,$24,$14,$14
+DB $08,$08,$08,$08,$10,$10,$00,$00
+DB $00,$00,$3C,$3C,$04,$04,$08,$08
+DB $10,$10,$20,$20,$3C,$3C,$00,$00
+DB $3C,$3C,$42,$7E,$B1,$CF,$A1,$DF
+DB $81,$FF,$81,$FF,$42,$7E,$3C,$3C
+DB $00,$42,$7D,$C3,$7D,$C3,$7F,$C3
+DB $FF,$C3,$FF,$C3,$FF,$C3,$FF,$C3
+DB $FF,$C3,$FF,$C3,$FF,$C3,$FF,$C3
+DB $FF,$C3,$FF,$C3,$FF,$C3,$FF,$C3
+DB $FF,$C3,$FF,$C3,$FF,$C3,$FF,$C3
+DB $FF,$C3,$FF,$C3,$FF,$C3,$42,$42
+DB $00,$00,$18,$18,$3C,$3C,$7E,$7E
+DB $18,$18,$18,$18,$18,$18,$00,$00
+DB $00,$00,$08,$08,$0C,$0C,$7E,$7E
+DB $7E,$7E,$0C,$0C,$08,$08,$00,$00
+DB $E7,$E7,$C3,$81,$81,$81,$00,$00
+DB $00,$00,$81,$81,$C3,$81,$E7,$E7
+DB $00,$00,$00,$00,$08,$18,$1C,$3C
+DB $3C,$3C,$18,$18,$00,$00,$00,$00
+DB $18,$18,$18,$18,$18,$18,$F7,$EF
+DB $E7,$FF,$18,$18,$18,$18,$18,$18
+DB $00,$FF,$00,$FF,$18,$E7,$3C,$C3
+DB $7E,$81,$00,$FF,$00,$FF,$00,$FF
+DB $00,$FF,$10,$EF,$18,$E7,$1C,$E3
+DB $1C,$E3,$18,$E7,$10,$EF,$00,$FF
+DB $00,$FF,$00,$FF,$00,$FF,$7E,$81
+DB $3C,$C3,$18,$E7,$00,$FF,$00,$FF
+DB $00,$FF,$08,$F7,$18,$E7,$38,$C7
+DB $38,$C7,$18,$E7,$08,$F7,$00,$FF
+DB $00,$FF,$18,$E7,$3C,$C3,$7E,$81
+DB $7E,$81,$3C,$C3,$18,$E7,$00,$FF
+DB $00,$3C,$18,$66,$24,$DB,$24,$DB
+DB $3C,$C3,$24,$DB,$24,$5A,$00,$3C
+DB $00,$3C,$38,$46,$28,$D7,$3C,$C3
+DB $24,$DB,$24,$DB,$3C,$42,$00,$3C
+DB $0F,$7F,$7F,$FF,$7F,$00,$7F,$00
+DB $7F,$00,$7F,$00,$1F,$FF,$7F,$7F
+DB $FF,$FF,$FF,$FF,$FF,$00,$FF,$00
+DB $FF,$00,$FF,$00,$FF,$FF,$FF,$FF
+DB $FE,$FE,$FF,$FF,$FE,$00,$FE,$00
+DB $FE,$00,$FE,$00,$FF,$FF,$FE,$FE
+DB $00,$99,$00,$5A,$00,$3C,$10,$EF
+DB $00,$FF,$00,$3C,$00,$5A,$00,$99
+DB $00,$00,$00,$24,$00,$42,$00,$00
+DB $00,$00,$00,$42,$00,$24,$00,$00
+DB $00,$24,$00,$00,$00,$81,$00,$00
+DB $00,$00,$00,$81,$00,$00,$00,$24
+DB $3C,$3C,$7E,$42,$FF,$A5,$FF,$81
+DB $FF,$A5,$FF,$99,$7E,$42,$3C,$3C
+DB $3C,$3C,$7E,$42,$FF,$81,$FF,$81
+DB $FF,$81,$FF,$81,$7E,$42,$3C,$3C
+DB $3C,$3C,$7E,$42,$FF,$A5,$FF,$81
+DB $FF,$99,$FF,$A5,$7E,$42,$3C,$3C
+DB $3C,$3C,$7E,$66,$FF,$BD,$FF,$81
+DB $FF,$99,$FF,$A5,$7E,$42,$3C,$3C
+DB $3C,$3C,$7E,$42,$FF,$A5,$FF,$81
+DB $FF,$99,$FF,$99,$7E,$42,$3C,$3C
+DB $3C,$3C,$7E,$42,$FF,$A5,$FF,$81
+DB $FF,$BD,$FF,$99,$7E,$42,$3C,$3C
+DB $3C,$3C,$7E,$42,$FF,$A5,$FF,$81
+DB $FF,$81,$FF,$BD,$7E,$42,$3C,$3C
+DB $18,$18,$7E,$7E,$18,$18,$18,$18
+DB $18,$18,$24,$24,$42,$42,$42,$42
+DB $18,$18,$7C,$7C,$1A,$1A,$98,$98
+DB $F8,$F8,$08,$08,$08,$08,$08,$08
+DB $18,$18,$7E,$7E,$18,$18,$18,$18
+DB $18,$18,$E7,$E7,$00,$00,$00,$00
+DB $58,$58,$3C,$3C,$1A,$1A,$18,$18
+DB $18,$18,$24,$24,$42,$42,$42,$42
+DB $18,$18,$3E,$3E,$58,$58,$18,$18
+DB $18,$18,$26,$26,$42,$42,$40,$40
+DB $30,$C0,$0C,$C0,$02,$C0,$32,$C0
+DB $09,$C0,$05,$C0,$C5,$C0,$C1,$C0
+DB $01,$01,$C2,$C2,$80,$40,$80,$40
+DB $80,$40,$A0,$60,$82,$7E,$FE,$02
+DB $00,$FF,$00,$81,$00,$81,$00,$81
+DB $00,$81,$00,$81,$00,$81,$00,$FF
+DB $00,$00,$00,$00,$00,$00,$00,$00
+DB $00,$18,$00,$3C,$00,$7E,$00,$FF
+DB $00,$80,$00,$C0,$00,$E0,$00,$F0
+DB $00,$F8,$00,$FC,$00,$FE,$00,$FF
+DB $00,$FF,$00,$FE,$00,$FC,$00,$F8
+DB $00,$F0,$00,$E0,$00,$C0,$00,$80
+DB $00,$FF,$00,$7F,$00,$3F,$00,$1F
+DB $00,$0F,$00,$07,$00,$03,$00,$01
+DB $00,$01,$00,$03,$00,$07,$00,$0F
+DB $00,$1F,$00,$3F,$00,$7F,$00,$FF
+DB $00,$00,$3E,$00,$7F,$00,$FF,$00
+DB $FF,$00,$7E,$00,$00,$00,$00,$00
+DB $01,$00,$43,$00,$33,$00,$3F,$00
+DB $1F,$00,$1F,$00,$7F,$00,$FF,$00
+DB $80,$00,$C2,$00,$CC,$00,$FC,$00
+DB $F8,$00,$F8,$00,$FE,$00,$FF,$00
+DB $FF,$00,$FE,$00,$F8,$00,$F8,$00
+DB $FC,$00,$CC,$00,$C2,$00,$80,$00
+DB $FF,$00,$7F,$00,$1F,$00,$1F,$00
+DB $3F,$00,$33,$00,$43,$00,$01,$00
+DB $07,$00,$8E,$80,$80,$BF,$C0,$FF
+DB $CF,$FF,$80,$BF,$80,$9F,$00,$00
+DB $00,$0C,$80,$1C,$00,$FC,$1E,$FE
+DB $00,$F0,$00,$C0,$00,$80,$00,$00
+DB $07,$00,$0E,$00,$00,$3F,$C0,$FF
+DB $CF,$FF,$00,$3F,$00,$1F,$00,$00
+DB $55,$55,$AA,$AA,$55,$55,$AA,$AA
+DB $55,$55,$AA,$AA,$55,$55,$AA,$AA
+DB $87,$07,$49,$89,$2A,$4A,$1C,$3C
+DB $3C,$1C,$4A,$2A,$89,$49,$07,$87
+DB $3E,$01,$7C,$02,$7C,$02,$3E,$01
+DB $3E,$01,$7C,$02,$F8,$04,$7C,$02
+DB $00,$1C,$08,$7C,$24,$DB,$21,$DF
+DB $4F,$FB,$26,$DF,$0C,$7F,$00,$3C
+DB $00,$18,$00,$3C,$00,$7E,$00,$FF
+DB $7E,$00,$7E,$2C,$7E,$0C,$7E,$0C
+DB $18,$00,$38,$04,$70,$0E,$00,$7E
+DB $00,$3C,$18,$18,$18,$18,$3C,$3C
+DB $18,$E7,$3C,$C3,$7E,$81,$FF,$00
+DB $00,$81,$2C,$AD,$0C,$8D,$0C,$8D
+DB $00,$E7,$04,$C3,$0E,$81,$7E,$81
+DB $3C,$C3,$18,$FF,$18,$FF,$3C,$FF
+DB $00,$00,$00,$00,$20,$00,$50,$00
+DB $00,$00,$04,$00,$0A,$00,$00,$00
+DB $18,$18,$3C,$3C,$7E,$7E,$7E,$7E
+DB $3C,$3C,$18,$18,$78,$78,$18,$18
+DB $00,$03,$00,$06,$00,$0C,$00,$38
+DB $00,$78,$00,$F8,$00,$F0,$00,$E0
+DB $7E,$7E,$72,$4E,$72,$4E,$72,$4E
+DB $72,$4E,$72,$4E,$72,$4E,$7E,$7E
+DB $7E,$7E,$42,$42,$72,$4E,$72,$4E
+DB $72,$4E,$72,$4E,$72,$4E,$7E,$7E
+DB $7E,$7E,$42,$42,$42,$42,$72,$4E
+DB $72,$4E,$72,$4E,$72,$4E,$7E,$7E
+DB $7E,$7E,$42,$42,$42,$42,$42,$42
+DB $72,$4E,$72,$4E,$72,$4E,$7E,$7E
+DB $7E,$7E,$42,$42,$42,$42,$42,$42
+DB $42,$42,$72,$4E,$72,$4E,$7E,$7E
+DB $7E,$7E,$42,$42,$42,$42,$42,$42
+DB $42,$42,$42,$42,$72,$4E,$7E,$7E
+DB $7E,$7E,$42,$42,$42,$42,$42,$42
+DB $42,$42,$42,$42,$42,$42,$7E,$7E
+DB $00,$00,$00,$6C,$40,$BE,$00,$FE
+DB $00,$FE,$00,$7C,$00,$38,$00,$10
+DB $18,$18,$3C,$3C,$14,$2C,$3C,$3C
+DB $7E,$7E,$3C,$3C,$3C,$3C,$18,$18
+DB $18,$18,$3C,$3C,$14,$2C,$3C,$3C
+DB $3C,$3C,$3C,$3C,$3C,$3C,$24,$24
+DB $18,$18,$3C,$3C,$14,$2C,$3C,$3C
+DB $7C,$7C,$3E,$3E,$7C,$7C,$04,$04
+DB $00,$18,$00,$3C,$38,$2C,$00,$3C
+DB $00,$7E,$00,$3C,$00,$3C,$00,$18
+DB $00,$18,$00,$3C,$38,$2C,$00,$3C
+DB $00,$3C,$00,$3C,$00,$3C,$00,$24
+DB $00,$18,$00,$3C,$38,$2C,$00,$3C
+DB $00,$7C,$00,$3E,$00,$7C,$00,$04
+DB $FF,$FF,$99,$99,$99,$99,$FF,$FF
+DB $FF,$FF,$99,$99,$99,$99,$FF,$FF
+DB $00,$00,$FF,$00,$FF,$7E,$C3,$7E
+DB $C3,$7E,$C3,$7E,$FF,$7E,$FF,$7E
+DB $FF,$00,$FF,$22,$FF,$74,$FF,$20
+DB $FF,$00,$FD,$16,$FE,$00,$00,$00
+DB $00,$00,$00,$00,$00,$00,$00,$00
+DB $00,$00,$00,$00,$00,$00,$00,$00
+
+tilesend::
+
+
+
+
+
+
+tennis::    ;BKG MAP
+DB $04,$04,$04,$04,$00,$00,$00,$21,$12,$1B
+DB $1B,$16,$20,$00,$00,$00,$04,$04,$04,$04
+DB $01,$01,$01,$01,$01,$01,$01,$01,$01,$01
+DB $01,$01,$01,$01,$01,$01,$01,$01,$01,$01
+DB $00,$00,$00,$00,$00,$00,$00,$00,$00,$01
+DB $01,$00,$00,$00,$00,$00,$00,$00,$00,$00
+DB $00,$00,$00,$00,$00,$00,$00,$00,$00,$01
+DB $01,$00,$00,$00,$00,$00,$00,$00,$00,$00
+DB $00,$00,$00,$00,$00,$00,$00,$00,$00,$01
+DB $01,$00,$00,$00,$00,$00,$00,$00,$00,$00
+DB $00,$00,$00,$00,$00,$00,$00,$00,$00,$01
+DB $01,$00,$00,$00,$00,$00,$00,$00,$00,$00
+DB $00,$00,$00,$00,$00,$00,$00,$00,$00,$01
+DB $01,$00,$00,$00,$00,$00,$00,$00,$00,$00
+DB $00,$00,$00,$00,$00,$00,$00,$00,$00,$01
+DB $01,$00,$00,$00,$00,$00,$00,$00,$00,$00
+DB $00,$00,$00,$00,$00,$00,$00,$00,$00,$01
+DB $01,$00,$00,$00,$00,$00,$00,$00,$00,$00
+DB $00,$00,$00,$00,$00,$00,$00,$00,$00,$01
+DB $01,$00,$00,$00,$00,$00,$00,$00,$00,$00
+DB $00,$00,$00,$00,$00,$00,$00,$00,$00,$01
+DB $01,$00,$00,$00,$00,$00,$00,$00,$00,$00
+DB $00,$00,$00,$00,$00,$00,$00,$00,$00,$01
+DB $01,$00,$00,$00,$00,$00,$00,$00,$00,$00
+DB $00,$00,$00,$00,$00,$00,$00,$00,$00,$01
+DB $01,$00,$00,$00,$00,$00,$00,$00,$00,$00
+DB $00,$00,$00,$00,$00,$00,$00,$00,$00,$01
+DB $01,$00,$00,$00,$00,$00,$00,$00,$00,$00
+DB $00,$00,$00,$00,$00,$00,$00,$00,$00,$01
+DB $01,$00,$00,$00,$00,$00,$00,$00,$00,$00
+DB $00,$00,$00,$00,$00,$00,$00,$00,$00,$01
+DB $01,$00,$00,$00,$00,$00,$00,$00,$00,$00
+DB $00,$00,$00,$00,$00,$00,$00,$00,$00,$01
+DB $01,$00,$00,$00,$00,$00,$00,$00,$00,$00
+DB $01,$01,$01,$01,$01,$01,$01,$01,$01,$01
+DB $01,$01,$01,$01,$01,$01,$01,$01,$01,$01
+DB $28,$43,$29,$20,$42,$79,$20,$4A,$6F,$6E
+DB $61,$74,$61,$6E,$20,$48,$69,$64,$61,$6C
+DB $67,$6F,$20,$00,$00,$00,$00,$00,$00,$00
+
+;END OF BKG MAP
+
+
+
+
+
+
+
